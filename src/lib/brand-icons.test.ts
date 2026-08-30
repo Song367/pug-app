@@ -61,10 +61,10 @@ describe('resolveDeviceModelIcon', () => {
 })
 
 describe('resolveBrowserIcon', () => {
-  // Each of these is Chromium-based but ships its own brand mark; before they were listed,
-  // Brave borrowed Chrome's glyph and the other three drew nothing at all.
+  // Each supported derivative keeps its own mark. Edge deliberately has no
+  // glyph until the asset's redistribution provenance is verified.
   it('resolves each Chromium derivative to its own glyph', () => {
-    expect(resolveBrowserIcon('Microsoft Edge')).toBe('edge')
+    expect(resolveBrowserIcon('Microsoft Edge')).toBeNull()
     expect(resolveBrowserIcon('Brave')).toBe('brave')
     expect(resolveBrowserIcon('Vivaldi')).toBe('vivaldi')
     expect(resolveBrowserIcon('DuckDuckGo')).toBe('duckduckgo')
@@ -80,8 +80,8 @@ describe('resolveBrowserIcon', () => {
 
   it('resolves the non-Chromium engines', () => {
     expect(resolveBrowserIcon('Safari')).toBe('safari')
-    expect(resolveBrowserIcon('Firefox')).toBe('firefox')
-    expect(resolveBrowserIcon('FxiOS')).toBe('firefox')
+    expect(resolveBrowserIcon('Firefox')).toBeNull()
+    expect(resolveBrowserIcon('FxiOS')).toBeNull()
   })
 
   it('resolves the browsers below Opera by share', () => {
@@ -118,14 +118,20 @@ describe('resolveBrowserIcon', () => {
       uc: 'Mozilla/5.0 (Linux; U; Android 10; en-US) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/78.0.3904.108 UCBrowser/13.4.0.1306 Mobile Safari/537.36',
       'samsung-internet':
         'Mozilla/5.0 (Linux; Android 13; SAMSUNG SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36',
-      firefox:
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/117.0 Mobile/15E148 Safari/605.1.15',
-      edge: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
       vivaldi:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Vivaldi/6.5',
     }
 
     for (const [expected, ua] of Object.entries(uas)) expect(resolveBrowserIcon(ua)).toBe(expected)
+  })
+
+  it('does not let unsupported Edge or Firefox marks fall through to another browser glyph', () => {
+    const firefox =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/117.0 Mobile/15E148 Safari/605.1.15'
+    const edge =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+    expect(resolveBrowserIcon(firefox)).toBeNull()
+    expect(resolveBrowserIcon(edge)).toBeNull()
   })
 
   // The reason the Samsung branch cannot match a bare 'samsung' from up there: a Chrome UA names the

@@ -62,6 +62,9 @@ describe('the auth canvas across a change of screen', () => {
     // boundary and vitest transforms it on first import. The default 1s clears easily on an idle
     // machine and misses once the suite runs enough files in parallel to contend for CPU.
     await screen.findByText('Sign in to Pug', {}, { timeout: 5000 })
+    const source = screen.getByRole('link', { name: 'Source code' })
+    expect(source.getAttribute('href')).toBe('/source')
+    expect(screen.getByRole('link', { name: 'AGPL-3.0' }).getAttribute('href')).toBe('/LICENSE.txt')
     // Awaited, not read straight off: the wall is its own lazy chunk, so it arrives a tick behind
     // the form. Without this the test is vacuous — happy-dom reports 1024px so the wall's own media
     // query matches and it renders; a narrower default would leave both queries null and toBe would

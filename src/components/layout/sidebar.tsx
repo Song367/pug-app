@@ -3,6 +3,7 @@ import {
   BookOpen,
   Check,
   ChevronsUpDown,
+  Code2,
   ContactRound,
   LayoutDashboard,
   Loader2,
@@ -332,6 +333,15 @@ const AppSidebar = () => {
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<a href="/source" target="_blank" rel="noopener noreferrer" />}
+              tooltip="Source code"
+            >
+              <Code2 />
+              <span>Source code</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton onClick={cycleTheme} tooltip={`Theme: ${theme}`}>
               {theme === 'light' && <Sun />}

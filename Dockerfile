@@ -45,6 +45,7 @@ RUN apk add --no-cache --upgrade \
 
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=build /app/LICENSE /usr/share/nginx/html/LICENSE.txt
 
 # nginx:alpine's nginx account is uid/gid 101. nginx.conf keeps every runtime
 # write under /tmp, so this image also works with a read-only root filesystem.

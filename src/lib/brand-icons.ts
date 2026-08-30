@@ -29,7 +29,9 @@ export const resolveBrowserIcon = (browser?: string) => {
   // Chrome's and Safari's, so every named brand has to sit above that generic pair or its
   // 'edg'/'opr'/'ucweb'/'fxios'/'samsungbrowser' token is unreachable. chrome above safari is the
   // same rule — every Chromium UA ends in "Safari".
-  if (matchToken(browser, ['edge', 'edg'])) return 'edge'
+  // No glyph until a redistributable source is verified. Returning early is
+  // important for raw Edge UAs, which also contain Chrome and Safari tokens.
+  if (matchToken(browser, ['edge', 'edg'])) return null
   if (matchToken(browser, ['brave'])) return 'brave'
   if (matchToken(browser, ['vivaldi'])) return 'vivaldi'
   if (matchToken(browser, ['duckduckgo'])) return 'duckduckgo'
@@ -41,7 +43,9 @@ export const resolveBrowserIcon = (browser?: string) => {
   if (matchToken(browser, ['samsung internet', 'samsung browser', 'samsungbrowser'])) return 'samsung-internet'
   if (matchToken(browser, ['yandex'])) return 'yandex'
   if (matchToken(browser, ['coc coc', 'coccoc'])) return 'coccoc'
-  if (matchToken(browser, ['firefox', 'fxios'])) return 'firefox'
+  // The previously vendored Firefox mark had no verified provenance. Keep the
+  // family label but deliberately render the neutral browser glyph.
+  if (matchToken(browser, ['firefox', 'fxios'])) return null
   if (matchToken(browser, ['chromium'])) return 'chromium'
   if (matchToken(browser, ['chrome', 'crios'])) return 'chrome'
   if (matchToken(browser, ['safari'])) return 'safari'

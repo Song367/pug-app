@@ -132,4 +132,14 @@ describe('the sidebar on mobile', () => {
 
     expect(document.body.contains(nav)).toBe(true)
   })
+
+  it('offers the corresponding source without exposing the app session', async () => {
+    await mount('/p/p1/overview')
+
+    const source = screen.getByRole('link', { name: 'Source code' })
+    expect(source.getAttribute('href')).toBe('/source')
+    expect(source.getAttribute('target')).toBe('_blank')
+    expect(source.getAttribute('rel')).toContain('noopener')
+    expect(source.getAttribute('rel')).toContain('noreferrer')
+  })
 })

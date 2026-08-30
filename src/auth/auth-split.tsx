@@ -49,15 +49,33 @@ export const AuthSplit = ({ children }: { children: ReactNode }) => {
           </div>
         </div>
 
-        <p className="text-center text-xs text-faint">
-          by{' '}
+        <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs text-faint">
+          <span>
+            by{' '}
+            <a
+              href="https://tshoka.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium underline-offset-4 hover:underline"
+            >
+              tshoka
+            </a>
+          </span>
           <a
-            href="https://tshoka.com"
+            href="/source"
             target="_blank"
             rel="noopener noreferrer"
             className="font-medium underline-offset-4 hover:underline"
           >
-            tshoka
+            Source code
+          </a>
+          <a
+            href="/LICENSE.txt"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium underline-offset-4 hover:underline"
+          >
+            AGPL-3.0
           </a>
         </p>
       </div>

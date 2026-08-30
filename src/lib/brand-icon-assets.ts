@@ -12,8 +12,6 @@ export const BRAND_ICON_ASSETS = {
   // The one raster: Coc Coc publishes no SVG, and the only vector is CC BY-SA.
   coccoc: '/brands/coccoc.png',
   duckduckgo: '/brands/duckduckgo.svg',
-  edge: '/brands/edge.svg',
-  firefox: '/brands/firefox.svg',
   ios: '/brands/ios.svg',
   linux: '/brands/linux.svg',
   macos: '/brands/macos.svg',
