@@ -6,7 +6,8 @@ permissions:
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, security/phase0]
+  workflow_dispatch:
 
 # A PR that gets a second push doesn't need the first run's answer.
 concurrency:
