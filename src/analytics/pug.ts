@@ -1,30 +1,25 @@
 // Pug dogfooding itself: this dashboard reports its own usage through @pug-sh/browser, into an
 // ordinary Pug project, over the same public-key ingest path a customer would use.
 //
-// Every export is a no-op unless VITE_PUG_PROJECT_ID and VITE_PUG_PUBLIC_KEY are both set, so an
-// unconfigured checkout — the dev default — sends nothing. That gate is enforced here rather than
-// leaned on from the SDK: the SDK's pre-init calls are already safe no-ops, but each one warns
-// through an ungated console.warn, which would put "[Pug SDK] track() called before init()" behind
-// every click in local dev.
+// Every export is a no-op unless tracking is explicitly enabled and both project credentials are
+// configured. This keeps isolated/self-hosted builds fail-closed even if stale credentials remain
+// in an environment file.
 
 import { identify, init, reset, type TrackFn, track } from '@pug-sh/browser'
 import { maskEventUrls } from './sanitize-url'
 
 const projectId = import.meta.env.VITE_PUG_PROJECT_ID
 const publicKey = import.meta.env.VITE_PUG_PUBLIC_KEY
+const analyticsOptIn = import.meta.env.VITE_PUG_ANALYTICS_ENABLED === 'true'
 
 // Exported so a caller can skip work that exists only to feed analytics — an unconfigured
 // (self-hosted) dashboard should not spend a request on identity it will never report.
-export const analyticsEnabled = Boolean(projectId && publicKey)
+export const analyticsEnabled = Boolean(analyticsOptIn && projectId && publicKey)
 
 export const initAnalytics = () => {
-  // Exactly one of the two set is a deploy typo, not an intentional "off": neither-set is silent by
-  // design, but a half-configured build believes analytics is on while sending nothing, and stays
-  // that way until someone notices an empty dashboard. Warn once (init runs once at startup) so the
-  // misconfiguration surfaces instead of hiding behind the same silent no-op as the disabled default.
-  if (Boolean(projectId) !== Boolean(publicKey)) {
+  if (analyticsOptIn && (!projectId || !publicKey)) {
     console.warn(
-      '[analytics] Only one of VITE_PUG_PROJECT_ID / VITE_PUG_PUBLIC_KEY is set — dogfooding stays OFF. Set both or neither.',
+      '[analytics] VITE_PUG_ANALYTICS_ENABLED is true but project credentials are incomplete — dogfooding stays OFF.',
     )
   }
 

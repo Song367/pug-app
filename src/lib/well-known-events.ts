@@ -230,7 +230,16 @@ const fmtAmountReason: Formatter = p => {
 // Curated subset of event kinds with custom inline headlines. Other kinds
 // fall through to generic custom-property rendering — expand this map as
 // new headlines are designed.
-const WELL_KNOWN: Record<string, { schema: DescMessage; headlines: string[]; format?: Formatter }> = {
+type WellKnownEntry = {
+  schema: DescMessage
+  headlines: string[]
+  // SDK wire aliases that are intentionally absent from the proto schema. They can be used for
+  // display, but stay in extraProps rather than being mislabeled as schema-backed fields.
+  headlineAliases?: string[]
+  format?: Formatter
+}
+
+const WELL_KNOWN: Record<string, WellKnownEntry> = {
   // navigation / interactions
   click: { schema: ClickPropertiesSchema, headlines: ['text'], format: fmtField('text') },
   rage_click: {
@@ -676,7 +685,8 @@ const WELL_KNOWN: Record<string, { schema: DescMessage; headlines: string[]; for
   // screenName and ingest passes custom-property keys through unmapped.
   screen_view: {
     schema: ScreenViewPropertiesSchema,
-    headlines: ['screenName', 'screen_name'],
+    headlines: ['screen_name'],
+    headlineAliases: ['screenName'],
     format: fmtFirst('screenName', 'screen_name'),
   },
 
@@ -736,9 +746,12 @@ const WELL_KNOWN: Record<string, { schema: DescMessage; headlines: string[]; for
 
 // Pre-compute field names and lookup sets per kind — schemas are static
 const fieldCache = new Map(
-  Object.entries(WELL_KNOWN).map(([kind, { schema, headlines }]) => {
+  Object.entries(WELL_KNOWN).map(([kind, { schema, headlines, headlineAliases = [] }]) => {
     const fields = schema.fields.map(f => f.name)
-    return [kind, { fields, fieldSet: new Set(fields), headlineSet: new Set(headlines) }] as const
+    return [
+      kind,
+      { fields, fieldSet: new Set(fields), headlineSet: new Set([...headlineAliases, ...headlines]) },
+    ] as const
   }),
 )
 
@@ -793,7 +806,7 @@ export const resolveInlineProps = (
   const canonical = resolveKind(kind)
   const entry = WELL_KNOWN[canonical]
   const cached = fieldCache.get(canonical)
-  const headlineFields = entry?.headlines ?? []
+  const headlineFields = entry ? [...(entry.headlineAliases ?? []), ...entry.headlines] : []
 
   // Always resolve raw headline pairs (used for tooltips); formatted headline takes display priority
   let headlinePairs = pickEntries(customProperties, headlineFields)

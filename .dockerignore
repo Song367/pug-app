@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+/artifacts
+*.log
+*.png
+.playwright-mcp
+.superpowers
+docs
+proto

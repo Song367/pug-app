@@ -92,10 +92,10 @@ const General = () => {
   return (
     <div className="space-y-8 max-w-2xl">
       <section>
-        <SectionHeader title="API Endpoint" description="Configured via VITE_API_BASE_URL environment variable" />
+        <SectionHeader title="API Endpoint" description="Protected by the same-origin session gateway" />
         <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 border border-border/50 px-2.5 py-2 rounded-md font-mono">
           <Lock className="w-3 h-3 shrink-0" />
-          <span className="break-all">{import.meta.env.VITE_API_BASE_URL}</span>
+          <span className="break-all">{window.location.origin}</span>
         </div>
       </section>
 

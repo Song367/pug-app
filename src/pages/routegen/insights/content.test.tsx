@@ -17,9 +17,8 @@ vi.mock('@visx/responsive', () => ({
     children({ width: 800, height: 400 }),
 }))
 
-// content.tsx reads activeProjectTimezoneAtom, which pulls workspace.atoms → api/rpc → transport,
-// and that throws at module scope with no VITE_API_BASE_URL. Nothing here reads an RPC atom; the
-// stubs exist only to keep transport out of the graph.
+// content.tsx reads activeProjectTimezoneAtom, which pulls workspace.atoms → api/rpc → transport.
+// Nothing here reads an RPC atom; the stubs exist only to keep transport out of the graph.
 vi.mock('@/api/rpc', async () => {
   const { atom } = await import('jotai')
   return { orgsRPCAtom: atom({}), projectsRPCAtom: atom({}), insightsRPCAtom: atom({}) }

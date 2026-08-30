@@ -4,12 +4,14 @@ import { toast } from 'sonner'
 import { trackEvent } from '@/analytics/pug'
 import type { GetMeResponse } from '@/api/genproto/dashboard/customers/v1/customers_pb'
 import type { AuthProviderConfig } from '@/api/genproto/public/auth/v1/auth_pb'
-import { authRPCAtom, customersRPCAtom } from '@/api/rpc'
+import { authRPCAtom, customersRPCAtom, sessionAuthRPCAtom } from '@/api/rpc'
 import { resetWorkspaceAtom } from '@/data/workspace.atoms'
 import { browserTimezone } from '@/lib/timezone'
-import { isDemoEnabled, isDemoSessionAtom } from './demo'
-import { customerIdAtom, jwtAtom, refreshTokenAtom } from './jwt.atoms'
+import { isDemoEnabled } from './demo'
 import { mapOAuthConnectError } from './oauth'
+import { applyGatewaySession, clearClientSession, customerIdAtom, publishSessionChange } from './session.atoms'
+
+export { isAuthenticatedAtom } from './session.atoms'
 
 // Result shape shared by every auth write atom: `error` is present iff the call failed.
 export type AuthResult = { ok: true } | { ok: false; error: string }
@@ -39,8 +41,8 @@ export const signInAtom = atom(
   async (get, set, { email, password }: { email: string; password: string }): Promise<AuthResult> => {
     const authRPC = get(authRPCAtom)
     try {
-      const resp = await authRPC.signInWithEmail({ email, password })
-      set(applySessionAtom, { token: resp.token, refreshToken: resp.refreshToken, method: 'password' })
+      await authRPC.signInWithEmail({ email, password })
+      await set(applySessionAtom, { method: 'password' })
       return { ok: true }
     } catch (error) {
       if (!(error instanceof ConnectError)) console.error('signIn unexpected error', error)
@@ -75,30 +77,21 @@ const clearMe = (set: Setter) => {
 // session has to say which it is — a new one is a type error until it answers.
 export type SignInMethod = 'password' | 'magic_link' | 'oidc' | 'demo'
 
-// Applies a freshly issued session token pair — password sign-in, magic link, OIDC, and the demo
-// all funnel here. The token alone decides identity (the server ignores any caller session). Always
-// clear the me state — email isn't in the JWT and must be refetched for the new identity.
+// Applies the non-secret session state returned by the same-origin gateway. Raw
+// access/refresh tokens never enter this process. Password, magic link, OIDC and
+// demo all funnel here after the gateway has set its HttpOnly cookie.
 //
 // Does NOT reset the workspace when the new token names a different account: WorkspaceBootstrap
 // watches customerIdAtom and does it for every switch, in-tab and cross-tab alike (see App.tsx).
 // Doing it here too only moved the same reset one render earlier, and nothing is mounted in that
 // render to care — every path that can reach here with a live session is on /magic-link or /demo,
 // which render standalone, and AnalyticsIdentity already resets its own identity on the switch.
-const applySessionAtom = atom(
-  null,
-  (_get, set, { token, refreshToken, method }: { token: string; refreshToken: string; method: SignInMethod }) => {
-    set(jwtAtom, token)
-    set(refreshTokenAtom, refreshToken)
-    clearMe(set)
-    // The demo marker is derived from the method and written in the same pass as the token, so a
-    // real login clears a prior demo's banner and a demo login sets it. Deriving it (rather than
-    // clearing here and letting demoSignInAtom set it true afterwards) removes the window where a
-    // demo JWT is live while this still reads false — analytics identity keys off this flag, and
-    // identifying the shared demo account would fuse every demo visitor into one profile.
-    set(isDemoSessionAtom, method === 'demo')
-    trackEvent('signin', { method })
-  },
-)
+const applySessionAtom = atom(null, async (_get, set, { method }: { method: SignInMethod }) => {
+  await applyGatewaySession(set)
+  clearMe(set)
+  publishSessionChange()
+  trackEvent('signin', { method })
+})
 
 // Connect applies no deadline of its own, so without this a hung call parks the status on 'loading'
 // for the life of the page. Surfaces as DeadlineExceeded through the catch below.
@@ -155,7 +148,7 @@ export const requestMagicLinkAtom = atom(null, async (get, _set, { email }: { em
   }
 })
 
-// Magic-link sign-in or sign-up; session handling (token pair, me state reset, demo marker) is
+// Magic-link sign-in or sign-up; session handling (gateway state, me state reset, demo marker) is
 // delegated to applySessionAtom. The workspace reset is not its job — WorkspaceBootstrap watches
 // customerIdAtom and rebuilds on a switch (see App.tsx).
 export const completeMagicLinkAtom = atom(null, async (get, set, { token }: { token: string }): Promise<AuthResult> => {
@@ -163,8 +156,8 @@ export const completeMagicLinkAtom = atom(null, async (get, set, { token }: { to
   try {
     // Seed the auto-created default project's reporting zone from the browser.
     // Malformed/empty values are coerced to UTC server-side; correct later in settings.
-    const resp = await authRPC.completeMagicLink({ token, timezone: browserTimezone() })
-    set(applySessionAtom, { token: resp.token, refreshToken: resp.refreshToken, method: 'magic_link' })
+    await authRPC.completeMagicLink({ token, timezone: browserTimezone() })
+    await set(applySessionAtom, { method: 'magic_link' })
     return { ok: true }
   } catch (error) {
     if (error instanceof ConnectError && error.code === Code.InvalidArgument) {
@@ -197,7 +190,7 @@ export const completeOIDCAtom = atom(
     const authRPC = get(authRPCAtom)
     try {
       // timezone seeds the auto-created project's reporting zone (parity with completeMagicLink).
-      const resp = await authRPC.completeOIDCSignIn({
+      await authRPC.completeOIDCSignIn({
         providerId: provider.id,
         code,
         codeVerifier,
@@ -205,7 +198,7 @@ export const completeOIDCAtom = atom(
         nonce,
         timezone: browserTimezone(),
       })
-      set(applySessionAtom, { token: resp.token, refreshToken: resp.refreshToken, method: 'oidc' })
+      await set(applySessionAtom, { method: 'oidc' })
       return { ok: true }
     } catch (error) {
       return { ok: false, error: mapOAuthConnectError(error, provider.displayName) }
@@ -213,8 +206,8 @@ export const completeOIDCAtom = atom(
   },
 )
 
-// Credential-less sign-in for the public read-only demo viewer (snoop@pug.sh). The minted token is
-// an ordinary viewer JWT — the role is never in the JWT (by design); viewer mode follows from the
+// Credential-less sign-in for the public read-only demo viewer (snoop@pug.sh). The gateway stores
+// the resulting token pair server-side; viewer mode follows from the
 // account's ORG_ROLE_VIEWER membership, which WorkspaceBootstrap loads into activeOrgAtom and
 // currentRoleAtom reads, flipping useCan() read-only. We deliberately ignore the response's
 // projectId rather than pinning it as x-project-id: correctness instead relies on the demo account
@@ -224,9 +217,8 @@ export const completeOIDCAtom = atom(
 export const demoSignInAtom = atom(null, async (get, set): Promise<AuthResult> => {
   const authRPC = get(authRPCAtom)
   try {
-    const resp = await authRPC.demoSignIn({})
-    // method: 'demo' is what sets isDemoSessionAtom — see applySessionAtom.
-    set(applySessionAtom, { token: resp.token, refreshToken: resp.refreshToken, method: 'demo' })
+    await authRPC.demoSignIn({})
+    await set(applySessionAtom, { method: 'demo' })
     return { ok: true }
   } catch (error) {
     // Unavailable = PUG_DEMO_ENABLED off or the demo account isn't seeded — expected, not a bug, so
@@ -241,37 +233,30 @@ export const demoSignInAtom = atom(null, async (get, set): Promise<AuthResult> =
   }
 })
 
-// Authenticated whenever a refresh token is present. The access JWT is short-lived
-// (~1h) and the transport silently re-mints it, so access-token expiry must NOT gate
-// the UI or active users would be bounced to sign-in hourly. A failed refresh clears
-// the refresh token (clearSession), flipping this to false.
-export const isAuthenticatedAtom = atom(get => get(refreshTokenAtom) !== '')
-
 export const signOutAtom = atom(null, async (get, set) => {
-  // Ahead of the clear, and of the reset() the identity sync fires once the token is gone: track()
+  // Ahead of the clear, and of the reset() the identity sync fires once the session is gone: track()
   // stamps the distinct ID at call time, so this is the last moment the event can be attributed to
   // the user who is leaving rather than to a fresh anonymous ID.
   trackEvent('signout')
 
-  // Best-effort server-side revocation of the refresh token's family, so the
-  // session can't be refreshed after logout. Clear locally regardless of outcome.
-  const refreshToken = get(refreshTokenAtom)
-  if (refreshToken) {
-    try {
-      await get(authRPCAtom).signOut({ refreshToken })
-    } catch (err) {
-      // Local sign-out still proceeds below, but a failed server revoke means the
-      // refresh-token family may stay live — make that observable rather than
-      // silently dropping it (matters most on a shared machine).
-      console.error('signOut server revocation failed', err)
-      if (err instanceof ConnectError && err.code !== Code.Unauthenticated) {
-        toast.warning('Signed out on this device, but remote sessions may still be active.')
-      }
+  try {
+    // The gateway reads its server-side refresh token, revokes that family and
+    // expires the HttpOnly cookie. The browser deliberately sends no token.
+    await get(sessionAuthRPCAtom).signOut({})
+  } catch (err) {
+    console.error('secure sign-out failed', err)
+    if (err instanceof ConnectError && err.code === Code.Unauthenticated) {
+      clearClientSession(set)
+      clearMe(set)
+      set(resetWorkspaceAtom)
+      publishSessionChange()
+      return
     }
+    toast.error('Could not sign out securely. Please try again.')
+    return
   }
-  set(jwtAtom, '')
-  set(refreshTokenAtom, '')
+  clearClientSession(set)
   clearMe(set)
-  set(isDemoSessionAtom, false)
   set(resetWorkspaceAtom)
+  publishSessionChange()
 })

@@ -3,7 +3,7 @@ import { createStore } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
-import { jwtFor } from '@/test/jwt'
+import { authenticatedSession } from '@/test/session'
 
 const { batchGet, orgsList, orgsGet, orgsUpdateDisplayName } = vi.hoisted(() => ({
   batchGet: vi.fn(),
@@ -239,20 +239,19 @@ describe('renameOrgAtom', () => {
 
 describe('lastProjectByOrgAtom', () => {
   it('reads storage on init, before anything mounts it', async () => {
-    localStorage.setItem('pug:jwt', JSON.stringify(jwtFor('cust-1')))
     localStorage.setItem('pug:lastProjectByOrg', JSON.stringify({ customerId: 'cust-1', byOrg: { 'org-a': 'a2' } }))
     vi.resetModules()
 
     // Re-imported so the atom initializes against the seeded storage: getOnInit reads at atom
     // construction, which is module scope. A plain read here would see the already-built atom.
-    // resetModules re-instantiates jwt.atoms alongside it, so the customer id is seeded the same way.
+    const { sessionStateAtom } = await import('@/auth/session.atoms')
     const { lastProjectByOrgAtom: freshAtom } = await import('./workspace.atoms')
+    const store = createStore()
+    store.set(sessionStateAtom, authenticatedSession())
 
-    // No mount, no effects — the value is there at the first synchronous read, which is the whole
-    // point: the default pick runs before onMount would have gotten around to loading it. Both reads
-    // have to be synchronous for this to pass; a lazy JWT would land an empty stamp here instead,
-    // which no longer matches the stored one and reads as no visits.
-    expect(createStore().get(freshAtom)).toEqual({ 'org-a': 'a2' })
+    // No mount and no effects: once the already-resolved gateway identity is in the store, the
+    // persisted project visit is available on the first synchronous read.
+    expect(store.get(freshAtom)).toEqual({ 'org-a': 'a2' })
   })
 
   it('does not hand a second account the first one’s project', async () => {
@@ -261,14 +260,14 @@ describe('lastProjectByOrgAtom', () => {
     // it. Without this the assertions below are satisfied by that leftover value and keep passing
     // with the rememberLastProject calls deleted outright — verified, not hypothetical.
     vi.resetModules()
-    const { jwtAtom } = await import('@/auth/jwt.atoms')
+    const { sessionStateAtom } = await import('@/auth/session.atoms')
     const { lastProjectByOrgAtom, rememberLastProjectAtom } = await import('./workspace.atoms')
     const store = createStore()
 
     // Two accounts on one browser, both members of org-a.
-    store.set(jwtAtom, jwtFor('cust-1'))
+    store.set(sessionStateAtom, authenticatedSession('cust-1'))
     store.set(rememberLastProjectAtom, { orgId: 'org-a', projectId: 'a1' })
-    store.set(jwtAtom, jwtFor('cust-2'))
+    store.set(sessionStateAtom, authenticatedSession('cust-2'))
 
     // Keyed by org alone this came back 'a1' — the first account's project, restored for the second,
     // and then overwritten by the second's own next visit.
@@ -279,17 +278,18 @@ describe('lastProjectByOrgAtom', () => {
     // sign-back-in restore for an account that is rare on this browser to begin with.
     store.set(rememberLastProjectAtom, { orgId: 'org-a', projectId: 'a2' })
     expect(store.get(lastProjectByOrgAtom)).toEqual({ 'org-a': 'a2' })
-    store.set(jwtAtom, jwtFor('cust-1'))
+    store.set(sessionStateAtom, authenticatedSession('cust-1'))
     expect(store.get(lastProjectByOrgAtom)).toEqual({})
   })
 
   it('ignores a value stored before visits carried a customer', async () => {
-    localStorage.setItem('pug:jwt', JSON.stringify(jwtFor('cust-1')))
     localStorage.setItem('pug:lastProjectByOrg', JSON.stringify({ 'org-a': 'a2' }))
     vi.resetModules()
 
+    const { sessionStateAtom } = await import('@/auth/session.atoms')
     const { lastProjectByOrgAtom: freshAtom, rememberLastProjectAtom } = await import('./workspace.atoms')
     const store = createStore()
+    store.set(sessionStateAtom, authenticatedSession())
 
     // The stored shape carries no customerId, so it can't match one. Reading it back as some
     // account's visits would hand every account the same stale pick.

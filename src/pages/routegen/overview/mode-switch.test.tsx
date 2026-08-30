@@ -1,9 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Nothing here reads an RPC atom, but the modules below import them, and the real ones pull in
-// network/transport — which throws at module scope when VITE_API_BASE_URL is unset. CI has no .env,
-// so a local run passes while the pipeline fails on the import alone.
+// Nothing here reads an RPC atom, but the modules below import them and the real ones pull in
+// network/transport. Stub that unrelated graph so this stays a focused mode-switch unit test.
 vi.mock('@/api/rpc', async () => {
   const { atom } = await import('jotai')
   return { orgsRPCAtom: atom({}), projectsRPCAtom: atom({}), insightsRPCAtom: atom({}) }

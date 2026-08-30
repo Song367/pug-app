@@ -3,25 +3,25 @@ import { useState } from 'react'
 import { cn } from '@/lib/utils'
 
 const ICON_CLASS = 'size-4 shrink-0 rounded-[3px]'
+const faviconAssetsUrl = import.meta.env.VITE_FAVICON_ASSETS_URL?.replace(/\/+$/, '')
 
-// Site favicon for a referrer domain, from favicons.pug.sh — first-party infrastructure on our own
-// domain (like maps.pug.sh for the basemap), which keeps this unbounded, runtime-discovered icon set
-// inside the no-external-CDN rule instead of an exception to it. The path carries a public hostname
-// (self-referral-blanked server-side), not customer PII. Decorative, so the img is aria-hidden.
+// Remote favicon lookup is opt-in. An isolated/self-hosted build makes no favicon request unless an
+// operator explicitly configures a trusted asset origin. Decorative, so the image is aria-hidden.
 export const DomainFavicon = ({ domain }: { domain: string }) => {
   const [failed, setFailed] = useState(false)
 
-  // onError only fires when the service is unreachable — a domain it simply lacks returns a blank
-  // placeholder (HTTP 200), so those rows show no glyph rather than this globe.
-  if (failed) return <Globe aria-hidden className={cn(ICON_CLASS, 'p-px text-muted-foreground/45')} />
+  if (!faviconAssetsUrl || failed) {
+    return <Globe aria-hidden className={cn(ICON_CLASS, 'p-px text-muted-foreground/45')} />
+  }
 
   return (
     <img
-      src={`https://favicons.pug.sh/${encodeURIComponent(domain)}`}
+      src={`${faviconAssetsUrl}/${encodeURIComponent(domain)}`}
       alt=""
       aria-hidden
       draggable={false}
       loading="lazy"
+      referrerPolicy="no-referrer"
       width={16}
       height={16}
       onError={() => setFailed(true)}

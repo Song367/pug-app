@@ -7,22 +7,8 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Preconnect external origins so off-site links navigate faster on click -->
-    <link rel="preconnect" href="https://tshoka.com" />
-    <link rel="preconnect" href="https://pug.sh" />
-    <link rel="preconnect" href="https://docs.pug.sh" />
-    <!-- crossorigin: map assets are CORS fetches and won't reuse a plain preconnect. -->
-    <link rel="preconnect" href="https://maps.pug.sh" crossorigin />
     <title>Pug</title>
-    <script>
-      // Apply dark mode before first paint to prevent flash.
-      // Must match atomWithStorage key ("pug:theme") and JSON format.
-      try {
-        const t = JSON.parse(localStorage.getItem('pug:theme') || '"system"')
-        const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
-        if (dark) document.documentElement.classList.add('dark')
-      } catch {}
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

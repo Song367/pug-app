@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Router } from 'wouter'
 import { memoryLocation } from 'wouter/memory-location'
 import { OrgRole, OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
-import { jwtFor } from '@/test/jwt'
+import { authenticatedSession } from '@/test/session'
 
 const { orgsList, batchGet } = vi.hoisted(() => ({ orgsList: vi.fn(), batchGet: vi.fn() }))
 
@@ -28,13 +28,17 @@ vi.mock('@/analytics/pug', () => ({
 }))
 
 const App = (await import('@/App')).default
-const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
+const { sessionStateAtom } = await import('@/auth/session.atoms')
+
+const sessionResponse = (body: object) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
 
 describe('the auth canvas across a change of screen', () => {
   // restoreMocks clears the factory's implementations before each test, and an undefined batchGet
   // fails the project fetch — which sets workspaceError, which is itself an auth screen.
   beforeEach(() => {
     batchGet.mockResolvedValue({ projects: [] })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sessionResponse({ authenticated: false })))
   })
 
   it('holds one wall from sign-in through bootstrap to the org picker', async () => {
@@ -68,8 +72,7 @@ describe('the auth canvas across a change of screen', () => {
     // What signInAtom writes. App walks sign-in → bootstrap → picker from here, three different
     // children in the same slot, and only a canvas hoisted above them survives the walk.
     act(() => {
-      store.set(refreshTokenAtom, 'refresh-token')
-      store.set(jwtAtom, jwtFor('cust-1'))
+      store.set(sessionStateAtom, authenticatedSession())
     })
 
     // Generous: the picker is a lazy chunk, and vitest transforms it on first import.
@@ -93,10 +96,11 @@ describe('the auth canvas across a change of screen', () => {
     )
 
     const store = createStore()
-    // What makes it *restored*: jwt.atoms reads storage synchronously, so App's very first render is
-    // already authenticated and no auth screen precedes the bootstrap.
-    store.set(refreshTokenAtom, 'refresh-token')
-    store.set(jwtAtom, jwtFor('cust-1'))
+    // The real app starts in `loading`; the gateway status response restores the HttpOnly-backed
+    // session before workspace bootstrap begins, without ever rendering the sign-in canvas.
+    vi.mocked(fetch).mockResolvedValue(
+      sessionResponse({ authenticated: true, customerId: 'cust-1', csrfToken: 'A'.repeat(43), demo: false }),
+    )
 
     const { container } = render(
       <Provider store={store}>

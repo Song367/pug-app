@@ -1,6 +1,6 @@
 import { createClient } from '@connectrpc/connect'
 import { atom } from 'jotai'
-import { publicTransportAtom, transportAtom } from '@/network/transport'
+import { publicTransportAtom, sessionTransportAtom, transportAtom } from '@/network/transport'
 import { CustomersService } from './genproto/dashboard/customers/v1/customers_pb'
 import { DashboardsService } from './genproto/dashboard/dashboards/v1/dashboards_pb'
 import { OrgsService } from './genproto/dashboard/orgs/v1/orgs_pb'
@@ -12,14 +12,16 @@ import { ActivityService } from './genproto/shared/activity/v1/activity_pb'
 import { InsightsService } from './genproto/shared/insights/v1/insights_pb'
 import { ProfilesService } from './genproto/shared/profiles/v1/profiles_pb'
 
-// Public (unauthenticated) — every method is credential-free, and on the authenticated transport a
-// 401 from CompleteOIDCSignIn would refresh-and-retry, replaying a single-use authorization code.
+// Session-establishing methods stay on the public transport so a failed OIDC
+// exchange can never be retried with its single-use authorization code.
 export const authRPCAtom = atom(get => createClient(AuthService, get(publicTransportAtom)))
-// Shared dashboards are read by anonymous visitors — use the credential-free
-// transport so a logged-in viewer's JWT is never attached to the public read path.
+// SignOut is the one AuthService method that must carry the in-memory CSRF token.
+export const sessionAuthRPCAtom = atom(get => createClient(AuthService, get(sessionTransportAtom)))
+// Shared dashboards are read by anonymous visitors — use the public transport
+// so the gateway never attaches a logged-in viewer's access token.
 export const sharedDashboardsRPCAtom = atom(get => createClient(SharedDashboardsService, get(publicTransportAtom)))
 
-// Dashboard — org-scoped (JWT auth)
+// Dashboard — org-scoped (Gateway session auth)
 export const customersRPCAtom = atom(get => createClient(CustomersService, get(transportAtom)))
 export const orgsRPCAtom = atom(get => createClient(OrgsService, get(transportAtom)))
 export const projectsRPCAtom = atom(get => createClient(ProjectsService, get(transportAtom)))
@@ -27,7 +29,7 @@ export const projectsRPCAtom = atom(get => createClient(ProjectsService, get(tra
 // GetUsage takes an orgId in the message and no x-project-id header.
 export const usageRPCAtom = atom(get => createClient(UsageService, get(transportAtom)))
 
-// Dashboard — project-scoped (JWT auth + x-project-id header from projectHeaderAtom)
+// Dashboard — project-scoped (Gateway session auth + x-project-id header from projectHeaderAtom)
 export const dashboardsRPCAtom = atom(get => createClient(DashboardsService, get(transportAtom)))
 export const insightsRPCAtom = atom(get => createClient(InsightsService, get(transportAtom)))
 export const activityRPCAtom = atom(get => createClient(ActivityService, get(transportAtom)))

@@ -6,7 +6,7 @@ import { Route, Router, Switch } from 'wouter'
 import { memoryLocation } from 'wouter/memory-location'
 import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
-import { jwtFor } from '@/test/jwt'
+import { anonymousSession, authenticatedSession } from '@/test/session'
 
 const { batchGet, orgsList, orgsGet, orgsUpdateDisplayName } = vi.hoisted(() => ({
   batchGet: vi.fn(),
@@ -49,7 +49,7 @@ const {
   selectOrgAtom,
   workspaceErrorAtom,
 } = await import('@/data/workspace.atoms')
-const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
+const { sessionStateAtom } = await import('@/auth/session.atoms')
 const { SidebarProvider } = await import('@/components/ui/sidebar')
 const AppSidebar = (await import('@/components/layout/sidebar')).default
 
@@ -59,12 +59,11 @@ const projects = [
   create(ProjectSchema, { id: 'p2', displayName: 'Second' }),
 ]
 
-// A signed-in store with an org already picked. Stored visits are keyed by the customer in the JWT,
-// so these tests need one.
+// A signed-in store with an org already picked. Stored visits are keyed by the gateway session's
+// customer, so these tests need one.
 const seedStore = (lastProjectByOrg?: Record<string, string>) => {
   const store = createStore()
-  store.set(refreshTokenAtom, 'refresh-token') // what isAuthenticatedAtom derives from
-  store.set(jwtAtom, jwtFor('cust-1'))
+  store.set(sessionStateAtom, authenticatedSession())
   store.set(bootstrapStatusAtom, 'ready')
   store.set(activeOrgAtom, orgA)
   // Seeded through the real write path rather than by poking the stored shape, so a total break in
@@ -148,28 +147,27 @@ describe('another tab signing in as someone else', () => {
     const store = mount({ path: '/' })
     await waitFor(() => expect(store.get(activeProjectAtom)?.id).toBe('p1'))
 
-    // What a storage event from the other tab's sign-in does here: the token syncs, the workspace
-    // doesn't. Left standing, this tab keeps cust-1's org and project under cust-2's session — and
-    // files the next visit it records against cust-2, which is the collision this all exists to stop.
-    store.set(jwtAtom, jwtFor('cust-2'))
+    // What a gateway session notification from the other tab's sign-in does here: the identity
+    // syncs, the workspace doesn't. Left standing, this tab keeps cust-1's org and project under
+    // cust-2's session and files the next visit it records against the wrong customer.
+    store.set(sessionStateAtom, authenticatedSession('cust-2'))
 
     await waitFor(() => expect(store.get(activeOrgAtom)).toBeNull())
     expect(store.get(activeProjectAtom)).toBeNull()
   })
 
-  it('leaves the workspace alone when the same account refreshes its token', async () => {
+  it('leaves the workspace alone when the same account refreshes its gateway session state', async () => {
     const store = mount({ path: '/' })
     await waitFor(() => expect(store.get(activeProjectAtom)?.id).toBe('p1'))
 
-    // The transport re-mints this hourly: a different token string carrying the same `sub`. It must
-    // not read as an account switch — tearing the workspace down on every refresh would bounce every
-    // active user through a full reload once an hour.
+    // The gateway may rotate server-side tokens and publish a fresh client state for the same
+    // customer. It must not read as an account switch and tear the workspace down.
     //
     // Inside act, or the effect under test hasn't run when the assertions below read the workspace,
     // and they hold no matter what it does — an `await Promise.resolve()` here passes even against a
     // reset keyed on the raw token, which fires on every refresh.
     await act(async () => {
-      store.set(jwtAtom, jwtFor('cust-1', 9e9 + 1))
+      store.set(sessionStateAtom, authenticatedSession('cust-1'))
     })
 
     expect(store.get(activeOrgAtom)).toBe(orgA)
@@ -181,7 +179,7 @@ describe('dropping the project URL when a session ends', () => {
   const mountGuard = (path: string, { authenticated = true } = {}) => {
     const { hook, history } = memoryLocation({ path, record: true })
     const store = createStore()
-    if (authenticated) store.set(refreshTokenAtom, 'refresh-token')
+    store.set(sessionStateAtom, authenticated ? authenticatedSession() : anonymousSession())
 
     render(
       <Provider store={store}>
@@ -196,16 +194,16 @@ describe('dropping the project URL when a session ends', () => {
   it('sends you off the project URL when the session ends under you', async () => {
     const { store, history } = mountGuard('/p/p1/overview')
 
-    // What clearSession does when the server rejects the refresh token — no button, no navigate of
-    // its own. Left alone, the next account to sign in on this browser inherits /p/p1.
-    store.set(refreshTokenAtom, '')
+    // What gateway status sync does when the server-side session has expired — no button and no
+    // navigation of its own. Left alone, the next account inherits /p/p1.
+    store.set(sessionStateAtom, anonymousSession())
 
     await waitFor(() => expect(history.at(-1)).toBe('/'))
   })
 
   it('replaces rather than pushes, so Back cannot walk into the dropped URL', async () => {
     const { store, history } = mountGuard('/p/p1/overview')
-    store.set(refreshTokenAtom, '')
+    store.set(sessionStateAtom, anonymousSession())
 
     await waitFor(() => expect(history.at(-1)).toBe('/'))
     // A push would leave the project URL one Back press away — still rendering <SignIn />, so it
@@ -232,7 +230,7 @@ describe('dropping the project URL when a session ends', () => {
     // matter what the guard does — an `await Promise.resolve()` here passes with the /p/ scope
     // check deleted outright.
     await act(async () => {
-      store.set(refreshTokenAtom, '')
+      store.set(sessionStateAtom, anonymousSession())
     })
 
     expect(history.at(-1)).toBe('/demo')
@@ -283,8 +281,7 @@ describe('landing on the bare app URL', () => {
 describe('restoring the last org', () => {
   const mountRestore = () => {
     const store = createStore()
-    store.set(refreshTokenAtom, 'refresh-token')
-    store.set(jwtAtom, jwtFor('cust-1'))
+    store.set(sessionStateAtom, authenticatedSession())
     store.set(lastOrgIdAtom, 'org-a')
 
     const { unmount } = render(

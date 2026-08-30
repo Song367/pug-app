@@ -9,7 +9,7 @@ import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 // Type-only, so it is erased and cannot run before the vi.mock factories below.
 import type { Me } from '@/auth/auth.atoms'
-import { jwtFor } from '@/test/jwt'
+import { anonymousSession, authenticatedSession } from '@/test/session'
 
 const { batchGet, orgsList, orgsGet, getMe, demoSignIn, completeMagicLink, identifyCustomer, resetIdentity } =
   vi.hoisted(() => ({
@@ -30,6 +30,7 @@ vi.mock('@/api/rpc', async () => {
     orgsRPCAtom: atom({ list: orgsList, get: orgsGet }),
     customersRPCAtom: atom({ getMe }),
     authRPCAtom: atom({ demoSignIn, completeMagicLink }),
+    sessionAuthRPCAtom: atom({ signOut: vi.fn() }),
   }
 })
 
@@ -46,7 +47,7 @@ vi.mock('./pug', () => ({
 const AnalyticsIdentity = (await import('./identity')).default
 const { WorkspaceBootstrap } = await import('@/App')
 const { activeOrgAtom, activeProjectAtom, bootstrapStatusAtom } = await import('@/data/workspace.atoms')
-const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
+const { sessionStateAtom } = await import('@/auth/session.atoms')
 const { completeMagicLinkAtom, demoSignInAtom, fetchMeAtom } = await import('@/auth/auth.atoms')
 
 const orgA = create(OrgSchema, { id: 'org-a', displayName: 'Org A' })
@@ -56,6 +57,11 @@ const projects = [create(ProjectSchema, { id: 'p1', displayName: 'First' })]
 const ada: Me = { customerId: 'cust-1', email: 'ada@pug.sh', emailVerified: true }
 const bob: Me = { customerId: 'cust-2', email: 'bob@pug.sh', emailVerified: true }
 const offline = () => new ConnectError('offline', Code.Unavailable)
+const gatewaySession = (customerId: string, demo = false) =>
+  new Response(JSON.stringify({ authenticated: true, customerId, csrfToken: 'A'.repeat(43), demo }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })
 
 // A GetMe the test resolves by hand: the whole question here is what identity does in the window
 // between the workspace settling and the email arriving, which a pre-resolved mock closes.
@@ -72,11 +78,10 @@ const deferredMe = () => {
 
 // The real bootstrap, because "when is the workspace settled" is half of what is under test, in
 // App.tsx's child order — identity's effects flush before the workspace resets.
-// jwt null is the demo case, which signs itself in rather than booting with a session.
-const mount = (jwt: string | null = jwtFor('cust-1')) => {
+// customerId null is the demo case, which signs itself in rather than booting with a session.
+const mount = (customerId: string | null = 'cust-1') => {
   const store = createStore()
-  store.set(refreshTokenAtom, 'refresh-token')
-  if (jwt) store.set(jwtAtom, jwt)
+  store.set(sessionStateAtom, customerId ? authenticatedSession(customerId) : anonymousSession())
   store.set(bootstrapStatusAtom, 'ready')
   store.set(activeOrgAtom, orgA)
 
@@ -103,6 +108,7 @@ describe('analytics identity', () => {
     batchGet.mockResolvedValue({ projects })
     orgsList.mockResolvedValue({ orgs: [orgA] })
     orgsGet.mockResolvedValue({ org: orgA })
+    vi.stubGlobal('fetch', vi.fn())
   })
 
   it('holds the first identify until the email lands, then states it once', async () => {
@@ -149,11 +155,11 @@ describe('analytics identity', () => {
     })
     await waitFor(() => expect(identifyCustomer).toHaveBeenCalledTimes(1))
 
-    // Signing in as someone else in another tab: the JWT syncs here through storage, and nothing in
+    // Signing in as someone else in another tab: the gateway identity syncs here, and nothing in
     // this tab clears the email that came with the last one.
     const second = deferredMe()
     act(() => {
-      store.set(jwtAtom, jwtFor('cust-2'))
+      store.set(sessionStateAtom, authenticatedSession('cust-2'))
     })
     await waitFor(() => expect(getMe).toHaveBeenCalledTimes(2))
     // The SDK holds identity until told otherwise; without the reset the new account's first events
@@ -172,8 +178,7 @@ describe('analytics identity', () => {
 
   it('never carries an email onto the next account on the shared-dashboard route', async () => {
     const store = createStore()
-    store.set(refreshTokenAtom, 'refresh-token')
-    store.set(jwtAtom, jwtFor('cust-1'))
+    store.set(sessionStateAtom, authenticatedSession())
 
     // The route never fetches for itself, so the address can only be one an earlier visit left.
     getMe.mockResolvedValueOnce(ada)
@@ -197,7 +202,7 @@ describe('analytics identity', () => {
     // skipped entirely and the keyed read on meAtom is the only thing between cust-1's address and
     // cust-2's profile — no fetch runs here to clear it, the way one does everywhere else.
     act(() => {
-      store.set(jwtAtom, jwtFor('cust-2'))
+      store.set(sessionStateAtom, authenticatedSession('cust-2'))
     })
 
     await waitFor(() => expect(identifyCustomer).toHaveBeenCalledWith('cust-2', {}))
@@ -216,7 +221,7 @@ describe('analytics identity', () => {
 
     const second = deferredMe()
     act(() => {
-      store.set(jwtAtom, jwtFor('cust-2'))
+      store.set(sessionStateAtom, authenticatedSession('cust-2'))
     })
     await waitFor(() => expect(getMe).toHaveBeenCalledTimes(2))
 
@@ -237,10 +242,10 @@ describe('analytics identity', () => {
     const store = mount()
     await settledWorkspace(store)
 
-    // A cross-tab sign-out, or a refresh the server rejects (transport's clearSession). Either way
-    // the JWT is emptied by a path that never runs clearMe, and the in-flight GetMe is abandoned.
+    // A cross-tab sign-out or an expired server-side session can land without running clearMe, while
+    // the in-flight GetMe is still outstanding.
     act(() => {
-      store.set(jwtAtom, '')
+      store.set(sessionStateAtom, anonymousSession())
     })
     await act(async () => {
       first.fail(new ConnectError('unauthenticated', Code.Unauthenticated))
@@ -251,7 +256,7 @@ describe('analytics identity', () => {
     // and this tab reports every later event as an anonymous stranger for the rest of its life.
     const second = deferredMe()
     act(() => {
-      store.set(jwtAtom, jwtFor('cust-1'))
+      store.set(sessionStateAtom, authenticatedSession())
     })
 
     await waitFor(() => expect(getMe).toHaveBeenCalledTimes(2))
@@ -277,8 +282,11 @@ describe('analytics identity', () => {
 
     // Into the demo and back out on a magic link, no sign-out in between — it lands back on a
     // customer this component has already fetched for.
-    demoSignIn.mockResolvedValue({ token: jwtFor('snoop'), refreshToken: 'refresh-token' })
-    completeMagicLink.mockResolvedValue({ token: jwtFor('cust-1'), refreshToken: 'refresh-token' })
+    demoSignIn.mockResolvedValue({})
+    completeMagicLink.mockResolvedValue({})
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(gatewaySession('snoop', true))
+      .mockResolvedValueOnce(gatewaySession('cust-1'))
     await act(async () => {
       await store.set(demoSignInAtom)
     })
@@ -304,7 +312,8 @@ describe('analytics identity', () => {
   })
 
   it('spends no lookup on a demo session', async () => {
-    demoSignIn.mockResolvedValue({ token: jwtFor('snoop'), refreshToken: 'refresh-token' })
+    demoSignIn.mockResolvedValue({})
+    vi.mocked(fetch).mockResolvedValueOnce(gatewaySession('snoop', true))
     const store = mount(null)
 
     await act(async () => {

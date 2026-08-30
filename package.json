@@ -15,6 +15,7 @@
     "format": "biome format --write .",
     "preview": "vite preview",
     "generate": "rm -rf src/api/genproto && buf generate --template buf.gen.yaml --include-imports proto",
+    "security:verify-build-deps": "node scripts/verify-build-dependencies.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "knip": "knip"
@@ -58,7 +59,6 @@
     "react-dom": "^19.2.8",
     "react-grid-layout": "^2.2.4",
     "react-hook-form": "^7.72.1",
-    "shadcn": "^4.18.0",
     "snarkdown": "^2.0.0",
     "sonner": "^2.0.7",
     "sugar-high": "^2.0.1",
@@ -88,10 +88,13 @@
     "happy-dom": "^20.11.2",
     "knip": "^6.32.2",
     "typescript": "~5.9.3",
-    "vite": "^8.0.1",
+    "vite": "^8.2.2",
     "vitest": "^4.1.11"
   },
   "overrides": {
-    "@types/react": "$@types/react"
+    "@types/react": "$@types/react",
+    "nanoid": "3.3.18",
+    "postcss": "8.5.26",
+    "vite": "8.2.2"
   }
 }

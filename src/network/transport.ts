@@ -1,26 +1,14 @@
 import { createRegistry } from '@bufbuild/protobuf'
 import { createValidator } from '@bufbuild/protovalidate'
-import { Code, ConnectError, createClient, type Interceptor } from '@connectrpc/connect'
+import { Code, ConnectError, type Interceptor } from '@connectrpc/connect'
 import { createConnectTransport } from '@connectrpc/connect-web'
 import { atom, getDefaultStore } from 'jotai'
 import { toast } from 'sonner'
 import { file_common_v1_filters } from '@/api/genproto/common/v1/filters_pb'
-import { AuthService } from '@/api/genproto/public/auth/v1/auth_pb'
 import { file_public_dashboards_v1_dashboards } from '@/api/genproto/public/dashboards/v1/dashboards_pb'
 import { file_shared_insights_v1_insights } from '@/api/genproto/shared/insights/v1/insights_pb'
-import {
-  clearSession,
-  JWT_KEY,
-  jwtAtom,
-  REFRESH_KEY,
-  readJWT,
-  refreshTokenAtom,
-  setSessionTokens,
-} from '@/auth/jwt.atoms'
+import { csrfTokenAtom, sessionStateAtom, syncSessionState } from '@/auth/session.atoms'
 
-// Register the app's file descriptors so the validator can compile rules defined
-// in these protos (e.g. buf.validate constraints on PropertyFilter which references
-// common.v1.FilterOperator).
 const validator = createValidator({
   registry: createRegistry(
     file_common_v1_filters,
@@ -42,146 +30,51 @@ const protovalidate: Interceptor = next => async req => {
   return next(req)
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL
-if (!apiBaseUrl) {
-  throw new Error('VITE_API_BASE_URL is not configured. Check your .env file.')
-}
-
 const store = getDefaultStore()
 
-// Read a token from the Jotai store, falling back to localStorage for the first
-// request before atomWithStorage hydrates. atomWithStorage JSON-serializes values,
-// so the raw localStorage value is e.g. '"abc..."'.
-const readToken = (atomRef: typeof jwtAtom, key: string): string => {
-  const inMemory = store.get(atomRef)
-  if (inMemory) return inMemory
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as string) : ''
-  } catch {
-    return ''
-  }
-}
-
-const getAccessToken = () => readToken(jwtAtom, JWT_KEY)
-const getRefreshToken = () => readToken(refreshTokenAtom, REFRESH_KEY)
-
-// Treat a token within 15s of expiry as expired (clock-skew leeway) so we refresh
-// just before, not just after, the server would reject it. Unparseable → expired.
-const accessTokenExpired = (token: string): boolean => {
-  try {
-    return readJWT(token).exp * 1000 <= Date.now() + 15_000
-  } catch {
-    return true
-  }
-}
-
-// Dedicated client for RefreshSession — deliberately WITHOUT authBearer so a
-// refresh call can't recurse into the refresh logic.
-const refreshClient = createClient(
-  AuthService,
-  // Deadline matters most here: the refresh is single-flight, so a stall holds every authenticated
-  // request queued behind it, not just this one.
-  createConnectTransport({ baseUrl: apiBaseUrl, interceptors: [protovalidate], defaultTimeoutMs: 60_000 }),
-)
-
-// Single-flight: concurrent requests that all see an expired token share ONE
-// refresh call. Critical for reuse-detection — firing two RefreshSession calls
-// with the same refresh token would trip the server's family revocation and log
-// the user out. The promise is cleared once settled so the next window refreshes.
-let refreshInFlight: Promise<string | null> | null = null
-
-const refreshAccessToken = (): Promise<string | null> => {
-  if (!refreshInFlight) {
-    refreshInFlight = doRefresh().finally(() => {
-      refreshInFlight = null
-    })
-  }
-  return refreshInFlight
-}
-
-// doRefresh is the SOLE authority on session death. It clears the session ONLY
-// when RefreshSession returns Unauthenticated — i.e. the server authoritatively
-// rejected the refresh token (expired / revoked / reused). Every other failure
-// (offline, 5xx during a deploy, timeout) is transient: the refresh token is
-// almost certainly still valid, so we keep the session and return null, letting
-// the caller's request fail normally and retry later. Conflating the two would
-// log active users out on infrastructure noise — the exact failure this whole
-// feature exists to avoid.
-const doRefresh = async (): Promise<string | null> => {
-  const refreshToken = getRefreshToken()
-  if (!refreshToken) return null
-  try {
-    const resp = await refreshClient.refreshSession({ refreshToken })
-    setSessionTokens({ accessToken: resp.token, refreshToken: resp.refreshToken })
-    return resp.token
-  } catch (err) {
-    if (err instanceof ConnectError && err.code === Code.Unauthenticated) {
-      clearSession()
-      toast.error('Session expired — please sign in again')
-      return null
-    }
-    // Transient — keep the session intact.
-    console.error('token refresh failed (transient); keeping session', err)
-    return null
-  }
-}
-
-const authBearer: Interceptor = next => async req => {
-  let token = getAccessToken()
-  // Proactively refresh an expired/missing access token while a refresh token
-  // exists, so the first request after the access window doesn't have to 401 first.
-  if ((!token || accessTokenExpired(token)) && getRefreshToken()) {
-    token = (await refreshAccessToken()) ?? ''
-    if (!token) {
-      // doRefresh already cleared the session (authoritative) or kept it (transient).
-      // Either way there's no usable access token, so don't send a doomed request.
-      throw new ConnectError('not authenticated', Code.Unauthenticated)
-    }
-  }
-  if (token) {
-    req.header.set('authorization', `Bearer ${token}`)
-  }
-
+const sessionCSRF: Interceptor = next => async req => {
+  const csrfToken = store.get(csrfTokenAtom)
+  if (csrfToken) req.header.set('x-pug-csrf-token', csrfToken)
   try {
     return await next(req)
-  } catch (err) {
-    if (!(err instanceof ConnectError) || err.code !== Code.Unauthenticated || req.stream) {
-      throw err
+  } catch (error) {
+    if (!(error instanceof ConnectError) || error.code !== Code.Unauthenticated) throw error
+
+    const before = store.get(sessionStateAtom)
+    try {
+      const after = await syncSessionState()
+      if (before.status === 'authenticated' && after.status === 'anonymous') {
+        toast.error('Session expired — please sign in again')
+      }
+    } catch (syncError) {
+      // Keep the existing client state on infrastructure noise. The original
+      // request error remains the one callers see.
+      console.error('session status refresh failed', syncError)
     }
-    // A 401 here could mean the access token was revoked before its own expiry —
-    // try ONE refresh+retry. It could equally be an AUTHORIZATION failure (e.g. a
-    // forbidden x-project-id), which the backend also returns as Unauthenticated.
-    // So we never clear the session based on this business-endpoint 401: session
-    // death is decided only inside doRefresh. If the retry still 401s, that's
-    // authorization, not an expired session — let it propagate untouched.
-    if (!getRefreshToken()) throw err
-    const fresh = await refreshAccessToken()
-    if (!fresh) throw err
-    req.header.set('authorization', `Bearer ${fresh}`)
-    return await next(req)
+    throw error
   }
 }
 
-export const transportAtom = atom(() => {
-  return createConnectTransport({
-    baseUrl: apiBaseUrl,
-    interceptors: [authBearer, protovalidate],
-    // Without this a hung request hangs until the tab closes, and a page whose only "loading"
-    // signal is absent data spins forever. A deadline turns it into a ConnectError the callers
-    // already handle. Generous, so a slow insights query over a wide range still lands.
-    defaultTimeoutMs: 60_000,
+const credentialedFetch: typeof fetch = (input, init) =>
+  fetch(input, {
+    ...init,
+    credentials: 'same-origin',
   })
-})
 
-// Transport for unauthenticated public endpoints (shared dashboards). Deliberately
-// WITHOUT authBearer so the public read path never attaches a logged-in viewer's
-// JWT or triggers a token refresh — it must behave identically for an anonymous
-// visitor, which also keeps the backend's token-independent authz path exercised.
-export const publicTransportAtom = atom(() => {
-  return createConnectTransport({
-    baseUrl: apiBaseUrl,
-    interceptors: [protovalidate],
+const transport = (interceptors: Interceptor[]) =>
+  createConnectTransport({
+    baseUrl: window.location.origin,
+    interceptors,
     defaultTimeoutMs: 60_000,
+    fetch: credentialedFetch,
   })
-})
+
+export const transportAtom = atom(() => transport([sessionCSRF, protovalidate]))
+
+// SignOut belongs to AuthService but requires the active session's CSRF token.
+// Login, magic-link, OIDC and provider discovery use publicTransportAtom below.
+export const sessionTransportAtom = atom(() => transport([sessionCSRF, protovalidate]))
+
+// Public RPCs never receive a bearer or CSRF token. Cookies are still sent by
+// the browser because the gateway needs to replace an existing session safely.
+export const publicTransportAtom = atom(() => transport([protovalidate]))

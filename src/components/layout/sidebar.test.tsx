@@ -6,7 +6,7 @@ import { Router } from 'wouter'
 import { memoryLocation } from 'wouter/memory-location'
 import { OrgRole, OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
-import { jwtFor } from '@/test/jwt'
+import { authenticatedSession } from '@/test/session'
 
 const { batchGet, projectCreate, orgsList } = vi.hoisted(() => ({
   batchGet: vi.fn(),
@@ -34,7 +34,7 @@ vi.mock('@/analytics/pug', () => ({
 const { SidebarProvider, SidebarTrigger } = await import('@/components/ui/sidebar')
 const AppSidebar = (await import('@/components/layout/sidebar')).default
 const { activeOrgAtom, activeProjectAtom, projectsAtom } = await import('@/data/workspace.atoms')
-const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
+const { sessionStateAtom } = await import('@/auth/session.atoms')
 
 // Admin so the Can gate renders the create-project affordance at all.
 const orgA = create(OrgSchema, { id: 'org-a', displayName: 'Org A', role: OrgRole.ADMIN })
@@ -49,8 +49,7 @@ const MOBILE_WIDTH = 500
 
 const mount = async (path: string) => {
   const store = createStore()
-  store.set(refreshTokenAtom, 'refresh-token')
-  store.set(jwtAtom, jwtFor('cust-1'))
+  store.set(sessionStateAtom, authenticatedSession())
   store.set(activeOrgAtom, orgA)
   store.set(projectsAtom, projects)
   store.set(activeProjectAtom, projects[0])

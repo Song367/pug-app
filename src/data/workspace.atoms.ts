@@ -3,7 +3,7 @@ import { atomWithStorage } from 'jotai/utils'
 import type { Org } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import type { Project } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { orgsRPCAtom, projectsRPCAtom } from '@/api/rpc'
-import { customerIdAtom } from '@/auth/jwt.atoms'
+import { customerIdAtom } from '@/auth/session.atoms'
 import { browserTimezone } from '@/lib/timezone'
 
 // Task 2: lastOrgIdAtom — synchronous initial read avoids first-render flash
@@ -226,8 +226,8 @@ export const workspaceSettledAtom = atom(get => {
 // initial value and only reads storage in onMount, so an early reader sees {} and defaults to the
 // first project — and once that default lands it *is* a valid pick, so the stored one never gets
 // another chance. (lastOrgIdAtom above buys the same guarantee by hand, predating this option.)
-// Not sufficient on its own: the customer id has to land synchronously too, which is why jwtAtom
-// pre-reads localStorage at module scope rather than deferring to onMount (see jwt.atoms).
+// The customer stamp comes from the gateway session bootstrap. WorkspaceBootstrap does not read
+// this value until the secure session has resolved, so there is no credential storage race here.
 const lastProjectAtom = atomWithStorage<{ customerId: string; byOrg: Record<string, string> }>(
   'pug:lastProjectByOrg',
   { customerId: '', byOrg: {} },

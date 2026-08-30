@@ -4,10 +4,10 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Route, useLocation } from 'wouter'
 import AnalyticsIdentity from '@/analytics/identity'
-import { isAuthenticatedAtom } from '@/auth/auth.atoms'
 import { AuthSplit } from '@/auth/auth-split'
 import { AuthPending, AuthStatus } from '@/auth/auth-status'
-import { customerIdAtom } from '@/auth/jwt.atoms'
+import { bootstrapSessionAtom, customerIdAtom, isAuthenticatedAtom, sessionStateAtom } from '@/auth/session.atoms'
+import { SessionSync } from '@/auth/session-sync'
 import { DemoBanner } from '@/components/demo-banner'
 import LoadingSpinner from '@/components/loading-spinner'
 import { SocialNav } from '@/components/social-nav'
@@ -66,9 +66,8 @@ const ThemeSync = () => {
 // to default-pick over a route that names a project the new account *can* see.
 //
 // Owned here rather than by each sign-out button because not every path has a button. The
-// transport's clearSession() — the sole authority on session death, fired when the server rejects
-// the refresh token — reaches no component and cannot navigate for itself, and on a shared machine
-// that expiry ends more sessions than anyone clicking Sign out.
+// A gateway status refresh reaches no navigation component when the server-side session expires,
+// and on a shared machine that expiry ends more sessions than anyone clicking Sign out.
 //
 // Keyed on the true→false transition, NOT on !authenticated: arriving already signed out is how a
 // shared /p/ link works, and that URL has to survive the sign-in that follows it. Replace rather than
@@ -119,10 +118,10 @@ export const WorkspaceBootstrap = () => {
     }
   }, [authenticated, status, setStatus, resetWorkspace])
 
-  // The one place an account switch tears the workspace down, in-tab and cross-tab alike. The JWT
-  // syncs across tabs (atomWithStorage listens for storage events); the workspace does not. Sign in
-  // as someone else in another tab and this one keeps the previous account's org and project while
-  // every request it sends now carries the new account's token — including the visit it records,
+  // The one place an account switch tears the workspace down, in-tab and cross-tab alike. Gateway
+  // session notifications sync identity across tabs; the workspace does not. Sign in as someone
+  // else in another tab and this one otherwise keeps the previous account's org and project while
+  // every request it sends now uses the new server-side session — including the visit it records,
   // which would file one account's project under the other's stamp and undo the whole point of
   // stamping them. Rebuild instead.
   const knownCustomer = useRef(customerId)
@@ -266,8 +265,25 @@ const WorkspaceError = ({ message }: { message: string }) => (
   </AuthStatus>
 )
 
+const SecureSessionError = () => {
+  const retry = useSetAtom(bootstrapSessionAtom)
+  return (
+    <AuthStatus
+      icon={AlertCircle}
+      tone="negative"
+      title="Secure session unavailable"
+      description="The local session gateway could not be reached."
+    >
+      <Button variant="outline" className="mt-6 h-10" onClick={() => void retry()}>
+        Retry
+      </Button>
+    </AuthStatus>
+  )
+}
+
 const App = () => {
   const [location] = useLocation()
+  const session = useAtomValue(sessionStateAtom)
   const authenticated = useAtomValue(isAuthenticatedAtom)
   const status = useAtomValue(bootstrapStatusAtom)
   const workspaceError = useAtomValue(workspaceErrorAtom)
@@ -296,7 +312,13 @@ const App = () => {
   // restored session into the dashboard.
   const onAuthScreen =
     !isSharedRoute &&
-    (isMagicLink || isOAuthCallback || isDemoRoute || !authenticated || failed || status === 'needs-selection')
+    (isMagicLink ||
+      isOAuthCallback ||
+      isDemoRoute ||
+      session.status === 'anonymous' ||
+      session.status === 'error' ||
+      failed ||
+      status === 'needs-selection')
 
   // Which of the two bootstraps this is, latched from whether an auth screen came first — a
   // restored session never shows one, so it boots on the plain spinner and never flashes the wall.
@@ -319,6 +341,8 @@ const App = () => {
     // Before the !authenticated branch on purpose: an already-signed-in user must still reach
     // <Demo />'s confirm step (entering the demo signs them out), not be routed past it.
     if (isDemoRoute) return <Demo />
+    if (session.status === 'loading') return <AuthPending label="Checking secure session…" />
+    if (session.status === 'error') return <SecureSessionError />
     if (!authenticated) return <SignIn />
     if (failed) return <WorkspaceError message={workspaceError ?? 'No organizations available for this account.'} />
     if (status === 'needs-selection') return <SelectOrg />
@@ -351,6 +375,7 @@ const App = () => {
   return (
     <>
       <ThemeSync />
+      <SessionSync />
       <SessionUrlGuard />
       {/*
         Unconditional, including on the shared route: it issues no workspace RPCs, so it doesn't
