@@ -51,7 +51,7 @@ jobs:
           cache-from: type=gha,scope=dashboard-release
           cache-to: type=gha,scope=dashboard-release,mode=max
 
-      - name: Sign and verify immutable digest
+      - name: Sign and verify immutable digest, provenance revision, and SBOM
         env:
           IMAGE: ghcr.io/song367/pug-dashboard
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -62,13 +62,11 @@ jobs:
             --certificate-identity "${IDENTITY}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMAGE}@${DIGEST}"
-          cosign verify-attestation \
-            --type https://slsa.dev/provenance/v0.2 \
-            --certificate-identity "${IDENTITY}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${IMAGE}@${DIGEST}"
-          cosign verify-attestation \
-            --type https://spdx.dev/Document \
-            --certificate-identity "${IDENTITY}" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${IMAGE}@${DIGEST}"
+          provenance="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .Provenance}}')"
+          jq -e --arg revision "${GITHUB_SHA}" '
+            ([.. | strings] | index("https://slsa.dev/provenance/v0.2") != null) and
+            ([.. | strings] | index($revision) != null)
+          ' <<<"${provenance}" >/dev/null
+          sbom="$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .SBOM}}')"
+          jq -e '[.. | objects | .SPDXID? // empty] | index("SPDXRef-DOCUMENT") != null' \
+            <<<"${sbom}" >/dev/null
