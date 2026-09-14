@@ -31,6 +31,9 @@ jobs:
           node-version: 22.22.2
           package-manager-cache: false
 
+      - name: Verify release provenance binding
+        run: node --test .github/scripts/provenance-source-binding.test.mjs
+
       - name: Install
         # Fails rather than resolves if bun.lock disagrees with package.json, so CI can't
         # quietly test a different dependency tree than the one committed. Dependency
