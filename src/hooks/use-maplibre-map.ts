@@ -1,5 +1,6 @@
 import { useAtomValue } from 'jotai'
-import maplibregl, { type MapOptions } from 'maplibre-gl'
+import type { MapOptions } from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { type Theme, themeAtom } from '@/data/theme.atoms'
 

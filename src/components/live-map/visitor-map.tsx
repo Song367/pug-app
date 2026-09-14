@@ -1,4 +1,5 @@
-import maplibregl, { type PaddingOptions } from 'maplibre-gl'
+import type { PaddingOptions } from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ActivityEvent } from '@/api/genproto/shared/activity/v1/activity_pb'
