@@ -49,7 +49,7 @@
     "jotai": "^2.19.0",
     "jotai-family": "^1.0.2",
     "lucide-react": "^1.7.0",
-    "maplibre-gl": "^5.24.0",
+    "maplibre-gl": "^6.4.1",
     "motion": "^12.42.2",
     "oidc-client-ts": "^3.5.0",
     "pmtiles": "^4.5.0",
@@ -93,6 +93,7 @@
   },
   "overrides": {
     "@types/react": "$@types/react",
+    "browserslist": "4.28.7",
     "nanoid": "3.3.18",
     "postcss": "8.5.26",
     "vite": "8.2.2"
